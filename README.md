@@ -1,0 +1,1 @@
+# crowdsec-nginx-auth-bouncer
