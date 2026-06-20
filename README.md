@@ -12,32 +12,28 @@ It intercepts requests at the Nginx ingress level, validates the extracted X-Rea
  3. Nginx triggers an internal auth_request to this Bouncer before processing the actual request.
  4. The Bouncer evaluates the IP against its locally cached blacklist synchronized from the **CrowdSec LAPI**.
  5. If banned, Nginx drops the request with a 403 Forbidden response. Otherwise, access is granted.
-## Setup
+## Setup & Installation
 ### 1. Nginx Configuration
-Add the following block to your Nginx virtual host configuration (e.g., inside Mailcow's site configs or reverse proxy setup):
+Add the following block to your Nginx site configuration to handle the validation check:
 ```nginx
-# Endpoint for CrowdSec verification
-location = /crowdsec-check {
+location /auth-request {
     internal;
-    proxy_pass http://crowdsec-auth-bouncer:8080/; # Point to the Bouncer container port
+    proxy_pass [http://127.0.0.1:8080/check](http://127.0.0.1:8080/check);
     proxy_pass_request_body off;
-    proxy_set_header Content-Length "";
-    
-    # Crucial: Pass the extracted real client IP to the bouncer
-    proxy_set_header X-Real-IP $remote_addr;
-}
-
-# Protect your location blocks
-location / {
-    auth_request /crowdsec-check;
-    
-    # Your normal proxy/upstream configuration here
-    # proxy_pass http://my_upstream;
+    proxy_set_header X-Original-URI $request_uri;
 }
 
 ```
-### 2. General Docker Setup (Standard docker-compose.yml)
-If you are using a standard standalone setup, add this service to your main docker-compose.yml:
+### 2. Standard Docker Setup
+If you run a custom Docker stack:
+ 1. **Download the Script:**
+   Place the bouncer.py file from this repository into your project directory next to your docker-compose.yml.
+   ```bash
+   wget [https://raw.githubusercontent.com/PumbaLP/crowdsec-nginx-auth-bouncer/main/bouncer.py](https://raw.githubusercontent.com/PumbaLP/crowdsec-nginx-auth-bouncer/main/bouncer.py)
+   
+   ```
+ 2. **Add the Service:**
+   Add the following service configuration to your docker-compose.yml:
 ```yaml
 services:
   crowdsec-auth-bouncer:
@@ -57,7 +53,16 @@ services:
 
 ```
 ### 3. Mailcow Setup (docker-compose.override.yml)
-For Mailcow installations, keep the configuration separate. Leave your main docker-compose.yml untouched and put the service definition into your docker-compose.override.yml:
+For Mailcow installations, keep the configuration clean and separate.
+ 1. **Place the Script:**
+   Download and save the bouncer.py file directly into Mailcow's Nginx configuration directory so the container can read it:
+   ```bash
+   # Run this inside your mailcow directory (e.g., /opt/mailcow-dockerized)
+   wget -O ./data/conf/nginx/bouncer.py [https://raw.githubusercontent.com/PumbaLP/crowdsec-nginx-auth-bouncer/main/bouncer.py](https://raw.githubusercontent.com/PumbaLP/crowdsec-nginx-auth-bouncer/main/bouncer.py)
+   
+   ```
+ 2. **Override Configuration:**
+   Leave your main docker-compose.yml untouched and put the service definition into your docker-compose.override.yml:
 ```yaml
 services:
   crowdsec-auth-bouncer:
@@ -76,21 +81,42 @@ services:
       - net.ipv4.ip_unprivileged_port_start=0
     networks:
       mailcow-net:
-        # Fixed internal IP for Mailcow network stability
         ipv4_address: 172.22.1.250
 
 ```
-## Troubleshooting
-To verify that Nginx successfully routes traffic and passes correct IP formats to the bouncer, inspect the live container logs:
+### 4. Manual Installation (Alternative to Docker)
+If you prefer running the bouncer directly on the host system without Docker:
+ 1. **Prerequisites:** Ensure Python 3.11+ is installed on your system.
+ 2. **File Placement:** Create a folder and download the script there:
+   ```bash
+   mkdir -p /usr/local/bin/crowdsec-bouncer
+   wget -O /usr/local/bin/crowdsec-bouncer/bouncer.py [https://raw.githubusercontent.com/PumbaLP/crowdsec-nginx-auth-bouncer/main/bouncer.py](https://raw.githubusercontent.com/PumbaLP/crowdsec-nginx-auth-bouncer/main/bouncer.py)
+   chmod +x /usr/local/bin/crowdsec-bouncer/bouncer.py
+   
+   ```
+ 3. **Create a Systemd Service:** Create a service file at /etc/systemd/system/crowdsec-bouncer.service:
+```ini
+[Unit]
+Description=CrowdSec Nginx Auth Bouncer
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/crowdsec-bouncer/bouncer.py
+Environment="CROWDSEC_LAPI_URL=http://localhost:8080"
+Environment="CROWDSEC_API_KEY=YOUR_API_KEY"
+Environment="BOUNCER_PORT=8080"
+Restart=always
+User=nobody
+
+[Install]
+WantedBy=multi-user.target
+
+```
+ 4. **Enable and Start the service:**
 ```bash
-docker compose logs -f crowdsec-auth-bouncer
+systemctl daemon-reload
+systemctl enable --now crowdsec-bouncer
 
 ```
-A healthy synchronization process logs the following on startup:
-```text
-[CROWDSEC] Initial sync successful. Loaded 112412 IPs.
-[INFO] Starting CrowdSec Auth Bouncer on port 8080...
-
-```
-## License
-MIT License. Feel free to use, modify, and distribute.
+## Troubleshooting
+To verify that Nginx successfully routes traffic and passes correct IP formats to the bouncer, check the Nginx error logs.
