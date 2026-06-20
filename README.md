@@ -5,7 +5,7 @@ It intercepts requests at the Nginx ingress level, validates the extracted X-Rea
  * **Zero Heavy Dependencies:** No need for Lua, OpenResty, or complex third-party Nginx modules.
  * **In-Memory Validation:** Ultra-low latency lookups (<1ms) using native Python sets.
  * **Cloudflare & IPv6 Ready:** Seamlessly works with forwarded real IP headers (both IPv4 and IPv6).
- * **Dockerized Architecture:** Easily integrates into existing docker-compose setups like Mailcow.
+ * **Dockerized Architecture:** Easily integrates into existing setups.
 ## How It Works
  1. The client connects via **Cloudflare**, which attaches the original client IP to the request headers.
  2. **Nginx** extracts the true client IP using the real_ip module (CF-Connecting-IP or X-Forwarded-For).
@@ -36,13 +36,8 @@ location / {
 }
 
 ```
-### 2. Docker Compose Configuration
-Generate a generic API key using the CrowdSec CLI on your host:
-```bash
-cscli bouncers add mailcow-auth-bouncer
-
-```
-Add or append this service to your docker-compose.yml (or docker-compose.override.yml for Mailcow):
+### 2. General Docker Setup (Standard docker-compose.yml)
+If you are using a standard standalone setup, add this service to your main docker-compose.yml:
 ```yaml
 services:
   crowdsec-auth-bouncer:
@@ -58,8 +53,31 @@ services:
       - ./bouncer.py:/app/bouncer.py:ro
     command: python3 /app/bouncer.py
     sysctls:
-      # Fix for dual-stack IPv4/IPv6 DNS resolution inside custom Docker bridges
       - net.ipv4.ip_unprivileged_port_start=0
+
+```
+### 3. Mailcow Setup (docker-compose.override.yml)
+For Mailcow installations, keep the configuration separate. Leave your main docker-compose.yml untouched and put the service definition into your docker-compose.override.yml:
+```yaml
+services:
+  crowdsec-auth-bouncer:
+    image: python:3.11-slim
+    container_name: crowdsec-auth-bouncer
+    restart: always
+    environment:
+      - CROWDSEC_LAPI_URL=http://crowdsec:8080
+      - CROWDSEC_API_KEY=YOUR_GENERATED_API_KEY_HERE
+      - CROWDSEC_SYNC_INTERVAL=10
+      - BOUNCER_PORT=8080
+    volumes:
+      - ./data/conf/nginx/bouncer.py:/app/bouncer.py:ro
+    command: python3 /app/bouncer.py
+    sysctls:
+      - net.ipv4.ip_unprivileged_port_start=0
+    networks:
+      mailcow-net:
+        # Fixed internal IP for Mailcow network stability
+        ipv4_address: 172.22.1.250
 
 ```
 ## Troubleshooting
